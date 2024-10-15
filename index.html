@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikasi Chat</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script type="module">
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyCMLnuXdsApCoczq3RNerm0c10-gsTqNes",
+            authDomain: "vas-comment.firebaseapp.com",
+            databaseURL: "https://vas-comment-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "vas-comment",
+            storageBucket: "vas-comment.appspot.com",
+            messagingSenderId: "665582216255",
+            appId: "1:665582216255:web:d5f112162c7e4ca44bc48a",
+            measurementId: "G-YCQXKWQM13"
+        };
+
+        // Inisialisasi Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-auth.js";
+        import { getDatabase, ref, set, onChildAdded, get } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const database = getDatabase(app);
+
+        let replyMessage = null;
+
+        // Tampilkan pendaftaran
+        function showSignup() {
+            document.getElementById('signupContainer').style.display = 'block';
+            document.getElementById('loginContainer').style.display = 'none';
+            document.getElementById('chatContainer').style.display = 'none';
+            document.getElementById('formTitle').innerText = "Daftar";
+        }
+
+        // Tampilkan login
+        function showLogin() {
+            document.getElementById('signupContainer').style.display = 'none';
+            document.getElementById('loginContainer').style.display = 'block';
+            document.getElementById('chatContainer').style.display = 'none';
+            document.getElementById('formTitle').innerText = "Login";
+        }
+
+        // Fungsi pendaftaran
+        async function signUp() {
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            const repeatPassword = document.getElementById('repeatPassword').value;
+
+            if (password !== repeatPassword) {
+                alert("Password dan Ulangi Password tidak cocok!");
+                return;
+            }
+
+            try {
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+
+                // Simpan data pengguna ke database
+                await set(ref(database, 'users/' + user.uid), {
+                    username: username,
+                    email: email
+                });
+
+                alert("Pendaftaran berhasil! Silakan login.");
+                showLogin(); // Tampilkan halaman login setelah berhasil mendaftar
+            } catch (error) {
+                console.error("Error during registration:", error);
+                alert("Error: " + error.message);
+            }
+        }
+
+        // Fungsi login
+        async function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                alert("Login berhasil! Selamat datang.");
+                
+                // Tampilkan halaman chat setelah login berhasil
+                document.getElementById('signupContainer').style.display = 'none';
+                document.getElementById('loginContainer').style.display = 'none';
+                document.getElementById('chatContainer').style.display = 'block';
+
+                loadMessages(); // Muat pesan setelah login berhasil
+            } catch (error) {
+                console.error("Error during login:", error);
+                alert("Error: " + error.message);
+            }
+        }
+
+        // Fungsi untuk mengirim pesan dengan anti-spam dan anti-duplicate
+        let lastMessageTime = 0;
+        let lastMessage = '';
+
+        async function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value.trim();
+            
+            if (message === '' || message === lastMessage) {
+                alert("Pesan kosong atau duplikasi!");
+                return;
+            }
+
+            const now = Date.now();
+            if (now - lastMessageTime < 5000) { // 5 detik jeda
+                alert("Tunggu beberapa detik sebelum mengirim pesan lagi.");
+                return;
+            }
+
+            const user = auth.currentUser;
+            if (user) {
+                const userRef = ref(database, 'users/' + user.uid);
+                const userSnapshot = await get(userRef); // Gunakan 'get' untuk mendapatkan data user
+                const username = userSnapshot.val().username;
+
+                const messageData = {
+                    uid: user.uid,
+                    username: username,
+                    message: message,
+                    timestamp: new Date().toISOString(),
+                    replyTo: replyMessage ? replyMessage : null // Menyimpan pesan yang dibalas
+                };
+
+                // Kirim pesan ke Firebase
+                const newMessageRef = ref(database, 'messages/' + Date.now());
+                await set(newMessageRef, messageData);
+
+                // Clear input field
+                messageInput.value = '';
+                lastMessageTime = now; // Update waktu pengiriman terakhir
+                lastMessage = message; // Update pesan terakhir
+                replyMessage = null; // Reset pesan balasan
+            } else {
+                console.log("User tidak terautentikasi.");
+            }
+        }
+
+        // Fungsi untuk memuat pesan
+        function loadMessages() {
+            const messagesRef = ref(database, 'messages');
+            const messagesContainer = document.getElementById('messages');
+            messagesContainer.innerHTML = ''; // Clear existing messages
+
+            // Mendaftarkan event listener untuk setiap pesan baru yang ditambahkan
+            onChildAdded(messagesRef, (snapshot) => {
+                const message = snapshot.val();
+
+                const messageElement = document.createElement('div');
+                messageElement.classList.add('message');
+
+                // Menambahkan event listener untuk reply
+                messageElement.addEventListener('click', () => {
+                    replyMessage = message.message; // Simpan pesan yang dibalas
+                    const replyIndicator = document.getElementById('replyIndicator');
+                    replyIndicator.innerText = `Membalas: ${message.message}`;
+                });
+
+                // Membuat profil icon berdasarkan inisial username
+                const profileIcon = document.createElement('div');
+                profileIcon.classList.add('profile-icon');
+                profileIcon.innerText = message.username[0].toUpperCase(); // Mengambil huruf pertama username
+
+                // Membuat kontainer teks yang berisi username dan pesan
+                const textContainer = document.createElement('div');
+                textContainer.classList.add('text-container');
+
+                // Menambahkan balasan jika ada
+                if (message.replyTo) {
+                    textContainer.innerHTML = `<strong>${message.username}</strong><br><em>Balasan: ${message.replyTo}</em><br>${message.message}`;
+                } else {
+                    textContainer.innerHTML = `<strong>${message.username}</strong><br>${message.message}`;
+                }
+
+                // Membuat tombol balas
+                const replyButton = document.createElement('button');
+                replyButton.classList.add('reply-button');
+                replyButton.innerHTML = '<i class="fas fa-reply"></i>'; // Menggunakan ikon Font Awesome untuk tombol balas
+                replyButton.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Mencegah event click pada messageElement
+                    if (replyMessage === message.message) {
+                        replyMessage = null; // Reset pesan balasan jika tombol diklik lagi
+                        replyButton.innerHTML = '<i class="fas fa-reply"></i>'; // Ganti teks tombol kembali ke balas
+                        const replyIndicator = document.getElementById('replyIndicator');
+                        replyIndicator.innerText = '';
+                    } else {
+                        replyMessage = message.message; // Simpan pesan yang dibalas
+                        replyButton.innerHTML = '<i class="fas fa-times"></i>'; // Ubah teks tombol
+                        const replyIndicator = document.getElementById('replyIndicator');
+                        replyIndicator.innerText = `Membalas: ${message.message}`;
+                    }
+                });
+
+                // Menambahkan profil icon, teks, dan tombol balas ke dalam elemen pesan
+                messageElement.appendChild(profileIcon);
+                messageElement.appendChild(textContainer);
+                messageElement.appendChild(replyButton); // Menambahkan tombol balas
+                messagesContainer.appendChild(messageElement);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight; // Scroll ke bawah
+            });
+        }
+
+        // Fungsi untuk logout
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('signUpButton').addEventListener('click', signUp);
+            document.getElementById('loginButton').addEventListener('click', login);
+            document.getElementById('sendMessageButton').addEventListener('click', sendMessage);
+            document.getElementById('logoutButton').addEventListener('click', () => {
+                auth.signOut();
+                alert("Logout berhasil!");
+                showLogin(); // Tampilkan halaman login setelah logout
+            });
+
+            // Memantau status login
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    document.getElementById('chatContainer').style.display = 'block';
+                    loadMessages(); // Muat pesan setelah login berhasil
+                } else {
+                    document.getElementById('chatContainer').style.display = 'none';
+                }
+            });
+        });
+    </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 500px;
+            width: 100%;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        #messages {
+            height: 900px !important;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+        }
+        .message {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 19px;
+            justify-content: center;
+        }
+        .text-container {
+            background-color: #e9ecef;
+            border-radius: 10px;
+            padding: 10px;
+            width: 90%; /* Fixed width for bubbles */
+            text-align: left;
+        }
+        .text-container::before {
+            content: '';
+            position: absolute;
+            left: -10px; /* Position of triangle */
+            top: 10px; /* Adjust top for triangle position */
+            border-width: 10px;
+            border-style: solid;
+            border-color: transparent #e9ecef transparent transparent; /* Triangle color */
+        }
+        .profile-icon {
+            width: 54px;
+            height: 35px;
+            background-color: #007bff;
+            color: white;
+            border-radius: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        #signupContainer, #loginContainer, #chatContainer {
+            display: none;
+        }
+        input[type="text"], input[type="email"], input[type="password"] {
+            width: calc(96% - 20px);
+            padding: 15px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 19px;
+        }
+        button {
+            width: 100%;
+            padding: 13px;
+            border: none;
+            border-radius: 19px;
+            background-color: #007bff;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                width: 100%;
+                padding: 10px;
+            }
+            #messages {
+                height: 200px;
+            }
+        }
+
+        .reply-button {
+            border: none;
+            border-radius: 30px; /* Tombol bulat */
+            background-color: #007bff;
+            color: white;
+            padding: 8px;
+            width: 60px;
+            margin-left: 10px; /* Jarak antara bubble pesan dan tombol */
+            cursor: pointer;
+        }
+
+        .reply-button:hover {
+            background-color: #0056b3;
+        }
+
+        #replyIndicator {
+            margin-top: 10px;
+            font-style: italic;
+            color: gray;
+        }
+    </style>
+</head>
+<body>
+    <div id="signupContainer" style="display: none;">
+        <h3 id="formTitle">Daftar</h3>
+        <input type="text" id="username" placeholder="Username" required />
+        <input type="email" id="signupEmail" placeholder="Email" required />
+        <input type="password" id="signupPassword" placeholder="Password" required />
+        <input type="password" id="repeatPassword" placeholder="Ulangi Password" required />
+        <button id="signUpButton">Daftar</button>
+        <button onclick="showLogin()">Sudah punya akun? Login</button>
+    </div>
+    <div id="loginContainer" style="display: none;">
+        <h3 id="formTitle">Login</h3>
+        <input type="email" id="loginEmail" placeholder="Email" required />
+        <input type="password" id="loginPassword" placeholder="Password" required />
+        <button id="loginButton">Login</button>
+        <button onclick="showSignup()">Belum punya akun? Daftar</button>
+    </div>
+    <div id="chatContainer" style="display: none;">
+        <h3>VAS Talk -  chat with anyone<div style="color:green;">Online</div></h3>
+        <div id="replyIndicator"></div>
+        <div id="messages" style="max-height: 500px !important; overflow-y: auto; margin-bottom: 10px; border-radius: 20px;"></div>
+        <input type="text" id="messageInput" placeholder="Tulis pesan..." />
+        <button id="sendMessageButton">Kirim</button>
+        <button id="logoutButton">Logout</button>
+    </div>
+</body>
+</html>
